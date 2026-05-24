@@ -1,6 +1,8 @@
 from pathlib import Path
 from typing import Any
 
+from .tool_registry import tool
+
 
 WORKSPACE_ROOT =  Path(__file__).resolve().parent.parent
 #禁止读取的文件
@@ -86,6 +88,31 @@ def validate_write_content(content: str) -> None:
     if len(content) > MAX_WRITE_CHARS:
         raise ValueError(f"写入内容过长：{len(content)} chars")
 
+@tool(
+    name="list_files",
+    description=(
+        "列出工作区内指定目录下的文件和文件夹。"
+        "当用户只是询问某个目录有哪些文件时，调用一次本工具后就应该根据结果回答，"
+        "不要继续搜索或读取文件。"
+        "根目录必须使用 path='.'，不要使用空字符串。"
+    ),
+    input_schema={
+        "type": "object",
+        "properties": {
+            "path": {
+                "type": "string",
+                "description": "工作区内的相对目录路径。根目录使用 '.'，不要传空字符串。默认值是 '.'。"
+            },
+            "recursive": {
+                "type": "boolean",
+                "description": "是否递归列出子目录。默认 false。用户没有明确要求递归时使用 false。"
+            }
+        },
+        "required": [],
+        "additionalProperties": False
+    },
+    risk="low",
+)
 #"""列出工作区内某个目录下的文件和文件夹。"""
 def list_files(path: str = ".", recursive: bool = False) -> dict[str, Any]:
     #将路径转为绝对路径再判断是否安全
@@ -127,6 +154,30 @@ def list_files(path: str = ".", recursive: bool = False) -> dict[str, Any]:
     }
 
 #"""读取工作区内的文本文件，默认最多返回 4000 个字符。"""
+@tool(
+    name="read_file",
+    description=(
+        "读取工作区内的文本文件内容。"
+        "只有当用户明确要求查看、读取、总结某个文件内容时才调用。"
+        "不要用本工具列目录，也不要读取 .env、.venv 等敏感路径。"
+    ),
+    input_schema={
+        "type": "object",
+        "properties": {
+            "path": {
+                "type": "string",
+                "description": "工作区内的相对文件路径，例如 tools/file_tools.py。不能是目录，不能是绝对路径。"
+            },
+            "max_chars": {
+                "type": "integer",
+                "description": "最大返回字符数，默认 4000。除非用户要求更多，否则不要超过 4000。"
+            },
+        },
+        "required": ["path"],
+        "additionalProperties": False
+    },
+    risk="low",
+)
 def read_file(path: str, max_chars: int = DEFAULT_MAX_CHARS) -> dict[str, Any]:
 
     target = resolve_workspace_path(path)
@@ -161,6 +212,34 @@ def read_file(path: str, max_chars: int = DEFAULT_MAX_CHARS) -> dict[str, Any]:
     }
 
 # """在工作区文本文件中搜索关键词，并返回匹配行。"""
+@tool(
+    name="search_file_content",
+    description=(
+        "在工作区内的文本文件内容中搜索关键词，并返回匹配文件、行号和匹配行。"
+        "只有当用户要求查找某个词、函数名、类名或文本出现位置时才调用。"
+        "如果用户只是询问目录有哪些文件，不要调用本工具。"
+    ),
+    input_schema={
+        "type": "object",
+        "properties": {
+            "query": {
+                "type": "string",
+                "description": "需要搜索的关键词、函数名、类名或文本内容。"
+            },
+            "path": {
+                "type": "string",
+                "description": "工作区内的相对路径，可以是文件或目录。根目录使用 '.'，不要传空字符串。默认值是 '.'。"
+            },
+            "max_results": {
+                "type": "integer",
+                "description": "最大返回结果数，默认 20。"
+            }
+        },
+        "required": ["query"],
+        "additionalProperties": False
+    },
+    risk="low",
+)
 def search_file_content(
     query: str,
     path: str = ".",
@@ -225,6 +304,36 @@ def search_file_content(
     }
 
 #写文件工具，可新建直接写或者覆盖写
+@tool(
+    name="write_text_file",
+    description=(
+        "在工作区内创建或覆盖文本文件。"
+        "当用户要求创建、生成、保存、写入文件时，必须调用本工具。"
+        "如果用户给出了内容，按用户内容写入；如果用户要求你生成内容，可以先根据上下文生成内容再写入。"
+        "默认不允许覆盖已有文件；只有用户明确要求覆盖时，overwrite 才能为 true。"
+        "不要写入 .env、.venv、.git、.idea 等敏感路径。"
+    ),
+    input_schema={
+        "type": "object",
+        "properties": {
+            "path": {
+                "type": "string",
+                "description": "工作区内的相对文件路径，例如 test/agent_note.md。不能是绝对路径，不能越出工作区。"
+            },
+            "content": {
+                "type": "string",
+                "description": "要写入文件的文本内容。可以是用户提供的内容，也可以是你根据用户要求和已读取上下文生成的内容。"
+            },
+            "overwrite": {
+                "type": "boolean",
+                "description": "文件已存在时是否覆盖。默认 false；只有用户明确要求覆盖时才使用 true。"
+            }
+        },
+        "required": ["path", "content"],
+        "additionalProperties": False
+    },
+    risk="high",
+)
 def write_text_file(path: str, content: str, overwrite: bool = False) -> dict[str, Any]:
     """在工作区内写入文本文件。
 
@@ -262,6 +371,36 @@ def write_text_file(path: str, content: str, overwrite: bool = False) -> dict[st
     }
 
 #文本替换工具
+@tool(
+    name="patch_text_file",
+    description=(
+        "对工作区内的文本文件做局部替换。"
+        "当用户要求修改已有文件、修改代码、替换某段内容时，优先调用本工具。"
+        "old_text 必须是文件中真实存在且只出现一次的完整片段。"
+        "不要用很短、可能重复出现的 old_text。"
+        "如果不确定 old_text，请先调用 read_file 读取相关文件。"
+    ),
+    input_schema={
+        "type": "object",
+        "properties": {
+            "path": {
+                "type": "string",
+                "description": "工作区内的相对文件路径，例如 xunlian/minicodexv_0524.py。不能是绝对路径，不能越出工作区。"
+            },
+            "old_text": {
+                "type": "string",
+                "description": "要被替换的原始文本片段。必须与文件内容完全一致，并且在文件中只出现一次。"
+            },
+            "new_text": {
+                "type": "string",
+                "description": "替换后的新文本片段。"
+            }
+        },
+        "required": ["path", "old_text", "new_text"],
+        "additionalProperties": False
+    },
+    risk="high",
+)
 def patch_text_file(path: str, old_text: str, new_text: str) -> dict[str, Any]:
     target = prepare_text_file_for_write(path)
     if not target.exists():
@@ -296,6 +435,32 @@ def patch_text_file(path: str, old_text: str, new_text: str) -> dict[str, Any]:
     }
 
 #追加写入工具
+@tool(
+    name="append_text_file",
+    description=(
+        "向工作区内的文本文件末尾追加内容。"
+        "当用户明确要求追加、补充、在文件末尾添加内容时调用本工具。"
+        "如果文件不存在，本工具会创建文件并写入内容。"
+        "不要用本工具修改已有代码中间的内容；修改已有内容应优先使用 patch_text_file。"
+        "不要写入 .env、.venv、.git、.idea 等敏感路径。"
+    ),
+    input_schema={
+        "type": "object",
+        "properties": {
+            "path": {
+                "type": "string",
+                "description": "工作区内的相对文件路径，例如 test/notes.md。不能是绝对路径，不能越出工作区。"
+            },
+            "content": {
+                "type": "string",
+                "description": "要追加到文件末尾的文本内容。"
+            }
+        },
+        "required": ["path", "content"],
+        "additionalProperties": False
+    },
+    risk="high",
+)
 def append_text_file(path: str, content: str) -> dict[str, Any]:
     target = prepare_text_file_for_write(path)
     validate_write_content(content)

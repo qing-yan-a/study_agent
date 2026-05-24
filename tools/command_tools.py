@@ -2,6 +2,7 @@ import subprocess
 from typing import Any
 
 from .file_tools import WORKSPACE_ROOT, resolve_workspace_path
+from .tool_registry import tool
 
 
 ALLOWED_COMMANDS = {"python", "py"}
@@ -45,6 +46,29 @@ def validate_command(command: list[str]) -> None:
     raise ValueError("只允许运行 python 文件，或 python -m py_compile 文件")
 
 
+@tool(
+    name="run_command",
+    description=(
+        "在工作区根目录运行白名单命令，用于验证代码。"
+        "只允许运行工作区内的 Python 文件，或使用 python -m py_compile 检查工作区内的 Python 文件。"
+        "命令必须用字符串数组表示，不要传 shell 字符串。"
+        "不允许 python -c、pip、powershell、cmd、删除文件等命令。"
+        "运行前系统会请求用户确认。"
+    ),
+    input_schema={
+        "type": "object",
+        "properties": {
+            "command": {
+                "type": "array",
+                "items": {"type": "string"},
+                "description": "命令数组，例如 ['python', 'test.py'] 或 ['py', '-m', 'py_compile', 'test.py']。不要传字符串命令。"
+            }
+        },
+        "required": ["command"],
+        "additionalProperties": False
+    },
+    risk="high",
+)
 def run_command(command: list[str]) -> dict[str, Any]:
     validate_command(command)
 

@@ -1,4 +1,5 @@
 import os
+from .tool_registry import tool
 from datetime import date as Date
 from datetime import timedelta
 from typing import Any
@@ -41,7 +42,31 @@ def weather_suggests_umbrella(day_weather: str, night_weather: str) -> bool:
     text = f"{day_weather}{night_weather}"
     return any(keyword in text for keyword in ["\u96e8", "\u96ea", "\u96f7", "\u9635\u96e8"])
 
-
+@tool(
+    name="get_weather",
+    description="查询指定地点在指定日期的天气预报。",
+    input_schema={
+        "type": "object",
+        "properties": {
+            "location": {
+                "type": "string",
+                "description": "城市或地点名称，例如：上海、北京、杭州。"
+            },
+            "date": {
+                "type": "string",
+                "description": "查询日期，today、tomorrow 或 YYYY-MM-DD。"
+            },
+            "unit": {
+                "type": "string",
+                "enum": ["celsius", "fahrenheit"],
+                "description": "温度单位。中国用户默认使用 celsius。"
+            }
+        },
+        "required": ["location", "date"],
+        "additionalProperties": False
+    },
+    risk="low",
+)
 def get_weather(location: str, date: str, unit: str = "celsius") -> dict[str, Any]:
     """查询高德天气预报，并返回 Agent 更容易理解的结构化天气数据。"""
     target_date = normalize_date(date)
@@ -108,7 +133,7 @@ def get_weather(location: str, date: str, unit: str = "celsius") -> dict[str, An
         "source": "amap"
     }
 
-
+#0524及以后已经通过工具注册可以直接调用get_weather，不需要run_tool了
 def run_tool(name: str, arguments: dict[str, Any]) -> dict[str, Any]:
     """校验工具参数，并根据工具名分发到对应的本地函数。"""
     if name != "get_weather":
