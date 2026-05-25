@@ -13,6 +13,7 @@ TEXT_SUFFIXES = {
     ".md",
     ".txt",
     ".json",
+    ".jsonl",
     ".yaml",
     ".yml",
     ".toml",

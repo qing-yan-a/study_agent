@@ -1,0 +1,1 @@
+"""MiniCodex core package."""

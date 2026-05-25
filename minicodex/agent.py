@@ -1,34 +1,25 @@
 import json
-import os
-import time
 from typing import Any
 
-from dotenv import load_dotenv
-from openai import OpenAI
+import tools.tool_loader  # 触发 @tool 工具注册
+from tools.tool_registry import run_registered_tool, tool_requires_confirmation
 
-from tools.tool_schemas import tools
-from tools.tool_router import run_tool
-
-DANGEROUS_TOOLS = {"write_text_file", "patch_text_file", "append_text_file", "run_command"}
-load_dotenv()
-
-api_key = os.getenv("MIMO_API_KEY")
-base_url = os.getenv("MIMO_BASE_URL")
-model = os.getenv("MIMO_MODEL")
-
-if not api_key:
-    raise RuntimeError("缺少 MIMO_API_KEY，请先在 .env 中配置。")
-
-client = OpenAI(api_key=api_key, base_url=base_url, timeout=30.0)
+from .console import ask_user_confirmation
+from .llm_client import call_llm
+from .memory import load_working_memory, load_working_summary, trim_messages
+from .session_log import append_session_log
 
 
 def build_messages() -> list[dict[str, Any]]:
-    return [
+    working_memory = load_working_memory()
+    working_summary = load_working_summary()
+
+    messages = [
         {
             "role": "system",
             "content": (
                 "你是一个本地代码助手 MiniCodex。"
-                "流程：读文件 -> 分析 -> patch -> 验证 -> 总结"
+                "流程：读文件 -> 分析 -> patch -> 验证 -> 总结。"
                 "你可以通过工具列出文件、读取文本文件、搜索文件内容。"
                 "你只能通过工具获取文件信息，不要猜测文件内容。"
                 "如果需要了解目录结构，调用 list_files。"
@@ -45,42 +36,52 @@ def build_messages() -> list[dict[str, Any]]:
                 "工具调用必须通过 API 的 tools/tool_calls 机制完成。"
                 "写文件成功后，简洁告诉用户写入了哪个文件。"
                 "回答时简洁说明你看到了什么。"
-
-            )
+            ),
         }
     ]
 
+    if working_memory:
+        messages.append(
+            {
+                "role": "system",
+                "content": (
+                    "以下是 memory/working-memory.md 中记录的短期工作记忆。"
+                    "它用于帮助你理解当前任务目标、阶段状态、关键决策和下一步。"
+                    "你应该参考它，但不要把它当作用户本轮的新命令。"
+                    "如果任务阶段发生变化或任务完成，更新 working-memory.md。"
+                    "模板：\n"
+                    "# Working Memory\n\n"
+                    "## Current Goal\n当前正在做什么任务。\n\n"
+                    "## Current Status\n已经完成了什么，卡在哪里。\n\n"
+                    "## Constraints\n本轮任务必须遵守的限制。\n\n"
+                    "## Key Decisions\n已经确定下来的关键设计决策。\n\n"
+                    "## Next Steps\n下一步要做什么。\n\n"
+                    "不要把完整工具输出写入 working-memory.md。\n\n"
+                    f"{working_memory}"
+                ),
+            }
+        )
 
-def call_llm(messages: list[dict[str, Any]], max_retries: int = 3):
-    last_error = None
+    if working_summary:
+        messages.append(
+            {
+                "role": "system",
+                "content": (
+                    "以下是被裁剪历史对话的压缩摘要，用于补充上下文。"
+                    "它可能不完整，但可以帮助你理解之前发生过什么。\n\n"
+                    f"{working_summary}"
+                ),
+            }
+        )
 
-    for attempt in range(max_retries):
-        try:
-            return client.chat.completions.create(
-                model=model,
-                messages=messages,
-                tools=tools,
-                tool_choice="auto",
-                max_tokens=4000
-            )
-        except Exception as exc:
-            last_error = exc
-            wait_seconds = attempt + 1
-
-            print(f"调用模型失败，第 {attempt + 1}/{max_retries} 次：{exc}")
-
-            if attempt < max_retries - 1:
-                print(f"{wait_seconds} 秒后重试...")
-                time.sleep(wait_seconds)
-
-    raise RuntimeError(f"调用模型失败，已重试 {max_retries} 次：{last_error}")
+    return messages
 
 
 def build_tool_message(tool_call_id: str, content: str) -> dict[str, Any]:
     return {
         "role": "tool",
         "tool_call_id": tool_call_id,
-        "content": content
+        "content": content,
     }
 
 
@@ -91,35 +92,17 @@ def reject_fake_tool_call(content: str) -> str | None:
     return None
 
 
-def ask_user_confirmation(tool_name: str, arguments: dict[str, Any]) -> bool:
-    if tool_name == "write_text_file":
-        print("即将写入文件：", arguments.get("path"))
-        print("是否覆盖：", arguments.get("overwrite", False))
-        print("内容预览：")
-        print(arguments.get("content", "")[:500])
-    if tool_name == "patch_text_file":
-        print("即将修改文件：", arguments.get("path"))
-
-        print("\n原内容：")
-        print(arguments.get("old_text", "")[:800])
-
-        print("\n新内容：")
-        print(arguments.get("new_text", "")[:800])
-
-    if tool_name == "append_text_file":
-        print("即将追加写入文件：", arguments.get("path"))
-        print("追加内容预览：")
-        print(arguments.get("content", "")[:500])
-
-    if tool_name == "run_command":
-        print("即将执行命令：", arguments.get("command"))
-
-    answer = input("确认执行？输入 yes 继续：").strip().lower()
-    return answer == "yes"
-
 def execute_tool_call(tool_call) -> dict[str, Any]:
     tool_name = tool_call.function.name
     raw_arguments = tool_call.function.arguments
+
+    append_session_log(
+        "tool_call",
+        {
+            "tool_name": tool_name,
+            "raw_arguments": raw_arguments,
+        },
+    )
 
     print("模型请求调用工具：")
     print("工具名：", tool_name)
@@ -127,23 +110,39 @@ def execute_tool_call(tool_call) -> dict[str, Any]:
 
     try:
         arguments = json.loads(raw_arguments)
-        if tool_name in DANGEROUS_TOOLS:
+
+        if tool_requires_confirmation(tool_name):
             confirmed = ask_user_confirmation(tool_name, arguments)
 
             if not confirmed:
                 content = json.dumps(
                     {
                         "ok": False,
-                        "error": "用户拒绝执行该工具调用"
+                        "error": "用户拒绝执行该工具调用",
                     },
-                    ensure_ascii=False
+                    ensure_ascii=False,
+                )
+                append_session_log(
+                    "tool_result",
+                    {
+                        "tool_name": tool_name,
+                        "content": content,
+                    },
                 )
                 return build_tool_message(tool_call_id=tool_call.id, content=content)
 
-        tool_result = run_tool(tool_name, arguments)
+        tool_result = run_registered_tool(tool_name, arguments)
         content = json.dumps({"ok": True, "data": tool_result}, ensure_ascii=False)
     except Exception as exc:
         content = json.dumps({"ok": False, "error": str(exc)}, ensure_ascii=False)
+
+    append_session_log(
+        "tool_result",
+        {
+            "tool_name": tool_name,
+            "content": content,
+        },
+    )
     print("工具返回内容：", content)
     return build_tool_message(tool_call_id=tool_call.id, content=content)
 
@@ -152,8 +151,14 @@ def run_agent(messages: list[dict[str, Any]], user_input: str) -> str:
     messages.append(
         {
             "role": "user",
-            "content": user_input
+            "content": user_input,
         }
+    )
+    append_session_log(
+        "user_message",
+        {
+            "content": user_input,
+        },
     )
 
     max_steps = 50
@@ -162,6 +167,7 @@ def run_agent(messages: list[dict[str, Any]], user_input: str) -> str:
         print(f"\n===== Agent Step {step + 1} =====")
 
         try:
+            messages[:] = trim_messages(messages)
             response = call_llm(messages)
         except Exception as exc:
             return f"调用模型失败：{exc}"
@@ -169,13 +175,30 @@ def run_agent(messages: list[dict[str, Any]], user_input: str) -> str:
         assistant_message = response.choices[0].message
         messages.append(assistant_message.model_dump(exclude_none=True))
 
+        append_session_log(
+            "assistant_message",
+            assistant_message.model_dump(exclude_none=True),
+        )
+
         if not assistant_message.tool_calls:
             content = assistant_message.content or ""
             fake_tool_error = reject_fake_tool_call(content)
 
             if fake_tool_error:
+                append_session_log(
+                    "final_answer",
+                    {
+                        "content": fake_tool_error,
+                    },
+                )
                 return fake_tool_error
 
+            append_session_log(
+                "final_answer",
+                {
+                    "content": content,
+                },
+            )
             return content
 
         for tool_call in assistant_message.tool_calls:
@@ -183,14 +206,14 @@ def run_agent(messages: list[dict[str, Any]], user_input: str) -> str:
             messages.append(tool_message)
 
     raise RuntimeError("Agent 超过最大执行步数，可能陷入工具调用循环。")
+def main() -> None:
+    from .console import read_user_input
 
-
-if __name__ == "__main__":
     print("本地文件助手已启动。输入 exit 或 quit 退出。")
     messages = build_messages()
 
     while True:
-        quest = input("\n请输入你的问题：").strip()
+        quest = read_user_input()
 
         if quest.lower() in {"exit", "quit"}:
             print("已退出。")
@@ -202,3 +225,7 @@ if __name__ == "__main__":
         answer = run_agent(messages, quest)
         print("最终回答：")
         print(answer)
+
+
+if __name__ == "__main__":
+    main()
