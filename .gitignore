@@ -10,6 +10,10 @@ sessions/
 jilu/
 xunlian/
 test/
+RAG/data/
+memory/working-memory.md
+memory/working-summary.md
+memory/research_session.json
 rendered_learning_route/
 learning_route_updated.docx
 tools_summary.md

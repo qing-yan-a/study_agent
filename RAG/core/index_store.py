@@ -11,10 +11,10 @@ INDEX_FILE = RAG_ROOT / "data" / "rag_index.json"
 
 
 def load_documents() -> list[dict[str, str]]:
-    """加载测试目录里的 Markdown 文档，作为本地 RAG 的原始资料。"""
+    """递归加载 test 目录下的 Markdown 文档，作为本地 RAG 的原始资料。"""
     documents = []
 
-    for path in sorted(TEST_DIR.glob("*.md")):
+    for path in sorted(TEST_DIR.rglob("*.md")):
         content = path.read_text(encoding="utf-8", errors="replace")
 
         documents.append(

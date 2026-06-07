@@ -7,6 +7,8 @@ from .tool_registry import tool
 WORKSPACE_ROOT =  Path(__file__).resolve().parent.parent
 #禁止读取的文件
 BLOCKED_NAMES = {".env", ".venv", "__pycache__", ".git", ".idea"}
+# 默认不进入的运行产物目录；用户明确指定这些目录时仍可读取。
+DEFAULT_IGNORED_NAMES = {"sessions"}
 #可以读取的文件类型
 TEXT_SUFFIXES = {
     ".py",
@@ -70,6 +72,19 @@ def is_text_file(path: Path) -> bool:
 #path.suffix获取文件后缀，.lower()把后缀转成小写
     return path.suffix.lower() in TEXT_SUFFIXES
 
+def is_default_ignored_path(path: Path, search_root: Path) -> bool:
+    """判断 path 是否处在默认忽略目录中；显式指定该目录时不忽略。"""
+    relative_parts = path.relative_to(WORKSPACE_ROOT).parts
+    root_parts = search_root.relative_to(WORKSPACE_ROOT).parts
+
+    for ignored_name in DEFAULT_IGNORED_NAMES:
+        if ignored_name not in relative_parts:
+            continue
+
+        return ignored_name not in root_parts
+
+    return False
+
 def prepare_text_file_for_write(path: str) -> Path:
     target = resolve_workspace_path(path)
     ensure_safe_path(target)
@@ -96,6 +111,7 @@ def validate_write_content(content: str) -> None:
         "当用户只是询问某个目录有哪些文件时，调用一次本工具后就应该根据结果回答，"
         "不要继续搜索或读取文件。"
         "根目录必须使用 path='.'，不要使用空字符串。"
+        "递归列出时默认跳过 sessions 等运行日志目录；如果用户明确要求查看日志，可直接把 path 设为 sessions。"
     ),
     input_schema={
         "type": "object",
@@ -135,6 +151,9 @@ def list_files(path: str = ".", recursive: bool = False) -> dict[str, Any]:
         try:
             ensure_safe_path(item)
         except ValueError:
+            continue
+
+        if recursive and is_default_ignored_path(item, target):
             continue
 
         item_info: dict[str, Any] = {
@@ -219,6 +238,7 @@ def read_file(path: str, max_chars: int = DEFAULT_MAX_CHARS) -> dict[str, Any]:
         "在工作区内的文本文件内容中搜索关键词，并返回匹配文件、行号和匹配行。"
         "只有当用户要求查找某个词、函数名、类名或文本出现位置时才调用。"
         "如果用户只是询问目录有哪些文件，不要调用本工具。"
+        "默认搜索会跳过 sessions 等运行日志目录；如果用户明确要求排查日志，可直接把 path 设为 sessions。"
     ),
     input_schema={
         "type": "object",
@@ -274,6 +294,9 @@ def search_file_content(
         except ValueError:
             continue
 
+        if is_default_ignored_path(file_path, target):
+            continue
+
         if not is_text_file(file_path):
             continue
 
@@ -301,6 +324,7 @@ def search_file_content(
         "query": query,
         "path": to_workspace_relative(target),
         "max_results": max_results,
+        "default_ignored": sorted(DEFAULT_IGNORED_NAMES),
         "matches": matches,
     }
 
