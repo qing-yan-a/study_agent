@@ -3,3 +3,7 @@ from . import command_tools
 from . import file_tools
 from . import weather_tools
 from . import rag_tools
+from . import web_search_tools
+from . import source_review_tools
+from . import extract_selected_sources_tools
+from . import research_session_tools
