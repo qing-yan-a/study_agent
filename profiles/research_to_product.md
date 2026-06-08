@@ -138,15 +138,19 @@ v0.4 输出必须包含：
 
 复试资料场景的工作原则：
 - 先解析学校、专业和年份；年份不明确时用 `latest`，并提示用户后续要人工核验目标年份。
-- 先生成多 query 搜索计划，不要只依赖单 query。
-- 官方来源优先：学校研究生院、学院官网、招生网、招生简章、复试方案、专业目录、调剂通知、录取名单。
-- 辅助来源其次：知乎、CSDN、小红书、论坛、B站、个人博客、经验帖。
+- 先调用 `plan_search_queries` 生成多 query 搜索计划，不要只依赖单 query。
+- 默认搜索顺序：`past_questions` -> `experience` -> `official_verification`。
+- `past_questions` 重点找公开真题回忆、机试题、面试题、题型线索。
+- `experience` 重点找复试流程、上岸经验、老师提问风格、英语面试经验。
+- `official_verification` 用于核验复试方案、招生简章、专业目录、名单、年份与流程细节。
 - 培训机构页、引流页、资料售卖页要标记营销风险。
 - 旧年份资料要标记时效风险。
 - 非目标学校、非目标专业、非目标年份应降低相关性或丢弃。
 
 每完成一个阶段，应更新 `research_session`：
 - 生成搜索计划后，更新 `search_queries`。
+- 需要继续执行搜索时，先调用 `get_pending_search_queries` 查看当前待执行 query。
+- 每完成一轮搜索后，调用 `update_search_query_status` 更新对应 `query_id` 的状态和备注。
 - 搜索完成后，更新 `candidate_sources`。
 - 初筛完成后，更新 `reviewed_sources`。
 - 用户确认来源后，更新 `selected_sources`。

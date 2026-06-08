@@ -1,4 +1,5 @@
 .env
+.codegraph/
 .venv/
 .idea/
 __pycache__/
@@ -14,6 +15,10 @@ RAG/data/
 memory/working-memory.md
 memory/working-summary.md
 memory/research_session.json
+memory/active_session.json
+memory/.legacy_session_migrated
+memory/sessions/
+memory/archived_sessions/
 rendered_learning_route/
 learning_route_updated.docx
 tools_summary.md

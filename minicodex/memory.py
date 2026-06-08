@@ -2,13 +2,15 @@ from pathlib import Path
 from typing import Any
 
 from .llm_client import summarize_messages
+from .session_manager import (
+    get_active_working_memory_path,
+    get_active_working_summary_path,
+)
 from .session_log import append_session_log
 
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 MEMORY_DIR = PROJECT_ROOT / "memory"
-WORKING_MEMORY_FILE = MEMORY_DIR / "working-memory.md"
-WORKING_SUMMARY_FILE = MEMORY_DIR / "working-summary.md"
 
 MAX_WORKING_MEMORY_CHARS = 3000
 MAX_WORKING_SUMMARY_CHARS = 3000
@@ -17,32 +19,43 @@ KEEP_RECENT_MESSAGES = 12
 
 
 def load_working_memory() -> str:
-    """读取根目录 memory/working-memory.md，作为本轮 Agent 的短期工作记忆。"""
-    if not WORKING_MEMORY_FILE.exists():
+    """读取当前 active session 的 working-memory.md。"""
+    try:
+        working_memory_file = get_active_working_memory_path()
+    except RuntimeError:
         return ""
 
-    return WORKING_MEMORY_FILE.read_text(
+    if not working_memory_file.exists():
+        return ""
+
+    return working_memory_file.read_text(
         encoding="utf-8",
         errors="replace",
     )[:MAX_WORKING_MEMORY_CHARS]
 
 
 def load_working_summary() -> str:
-    """读取被裁剪历史对话的压缩摘要。"""
-    if not WORKING_SUMMARY_FILE.exists():
+    """读取当前 active session 的 working-summary.md。"""
+    try:
+        working_summary_file = get_active_working_summary_path()
+    except RuntimeError:
         return ""
 
-    return WORKING_SUMMARY_FILE.read_text(
+    if not working_summary_file.exists():
+        return ""
+
+    return working_summary_file.read_text(
         encoding="utf-8",
         errors="replace",
     )[:MAX_WORKING_SUMMARY_CHARS]
 
 
 def save_working_summary(content: str) -> None:
-    """覆盖写入新的压缩摘要，避免 summary 文件无限增长。"""
-    MEMORY_DIR.mkdir(parents=True, exist_ok=True)
+    """覆盖写入当前 active session 的压缩摘要。"""
+    working_summary_file = get_active_working_summary_path()
+    working_summary_file.parent.mkdir(parents=True, exist_ok=True)
 
-    WORKING_SUMMARY_FILE.write_text(
+    working_summary_file.write_text(
         content[:MAX_WORKING_SUMMARY_CHARS],
         encoding="utf-8",
     )

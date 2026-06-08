@@ -15,6 +15,15 @@ from tools.tool_registry import run_registered_tool, tool_requires_confirmation
 from minicodex.console import ask_user_confirmation
 from minicodex.llm_client import call_llm
 from minicodex.memory import load_working_memory, load_working_summary, trim_messages
+from minicodex.session_manager import (
+    archive_session,
+    create_session,
+    get_active_session_id,
+    list_sessions,
+    migrate_legacy_state_if_needed,
+    read_research_session,
+    set_active_session,
+)
 from minicodex.soft_stop import SoftStopController
 from minicodex.session_log import append_session_log
 
@@ -105,7 +114,7 @@ def build_messages(profile_name: str = DEFAULT_PROFILE) -> list[dict[str, Any]]:
             {
                 "role": "system",
                 "content": (
-                    "以下是 memory/working-memory.md 中记录的短期工作记忆。"
+                    "以下是当前 active session 的 working-memory.md 中记录的短期工作记忆。"
                     "它用于帮助你理解当前任务目标、阶段状态、关键决策和下一步。"
                     "你应该参考它，但不要把它当作用户本轮的新命令。"
                     "只有在多步骤任务、代码修改任务、调试任务、阶段性开发任务中，才需要考虑更新 working-memory.md。"
@@ -239,6 +248,102 @@ def stop_current_run(messages: list[dict[str, Any]]) -> str:
     return content
 
 
+def select_session_interactively() -> str | None:
+    migrated_session_id = migrate_legacy_state_if_needed()
+
+    if migrated_session_id:
+        print("已完成一次性旧状态迁移，并创建默认研究会话：昆明理工复试资料收集")
+
+    while True:
+        sessions = list_sessions()
+        active_session_id = get_active_session_id()
+
+        print("\n可用研究会话：")
+        if not sessions:
+            print("  (暂无会话，请输入 n 新建)")
+        else:
+            for index, session in enumerate(sessions, start=1):
+                school = str(session.get("school", "")).strip()
+                major = str(session.get("major", "")).strip()
+                year = str(session.get("year", "")).strip()
+                updated_at = str(session.get("updated_at", "")).strip()
+                status = str(session.get("status", "active")).strip()
+                active_mark = "*" if session.get("session_id") == active_session_id else " "
+                meta = "/".join(part for part in [school, major, year] if part)
+                suffix = f" [{meta}]" if meta else ""
+                print(
+                    f"{active_mark}[{index}] {session.get('title', session.get('session_id', '未命名会话'))}"
+                    f"{suffix} status={status} updated_at={updated_at}"
+                )
+
+        print("输入编号进入会话，输入 n 新建会话，输入 d 2 归档删除第 2 个会话，输入 q 退出。")
+        answer = input("请选择会话：").strip()
+
+        if not answer:
+            continue
+
+        lower_answer = answer.lower()
+
+        if lower_answer == "q":
+            return None
+
+        if lower_answer == "n":
+            school = input("学校：").strip()
+            major = input("专业：").strip()
+            year = input("年份：").strip()
+            research_goal = input("研究目标（可留空）：").strip()
+
+            if not school or not major or not year:
+                print("学校、专业、年份不能为空。")
+                continue
+
+            session = create_session(
+                school=school,
+                major=major,
+                year=year,
+                research_goal=research_goal,
+            )
+            set_active_session(str(session["session_id"]))
+            print(f"已新建并进入会话：{session['title']}")
+            return str(session["session_id"])
+
+        if lower_answer.startswith("d"):
+            parts = answer.split()
+            if len(parts) != 2 or not parts[1].isdigit():
+                print("删除格式应为：d 2")
+                continue
+
+            target_index = int(parts[1]) - 1
+            if target_index < 0 or target_index >= len(sessions):
+                print("会话编号不存在。")
+                continue
+
+            session = sessions[target_index]
+            title = str(session.get("title", session.get("session_id", "未命名会话")))
+            confirm = input(f"确认归档删除会话 [{parts[1]}] {title}？输入 yes 继续：").strip().lower()
+            if confirm != "yes":
+                print("已取消归档删除。")
+                continue
+
+            archived_path = archive_session(str(session["session_id"]))
+            print(f"已归档到：{archived_path}")
+            continue
+
+        if answer.isdigit():
+            target_index = int(answer) - 1
+            if target_index < 0 or target_index >= len(sessions):
+                print("会话编号不存在。")
+                continue
+
+            session_id = str(sessions[target_index]["session_id"])
+            set_active_session(session_id)
+            session = read_research_session(session_id)
+            print(f"已进入会话：{session.get('title', session_id)}")
+            return session_id
+
+        print("无法识别的输入，请重试。")
+
+
 def run_agent(messages: list[dict[str, Any]], user_input: str) -> str:
     global ACTIVE_STOP_CONTROLLER
 
@@ -345,6 +450,12 @@ def main() -> None:
     from minicodex.console import read_user_input
 
     print("本地文件助手已启动。输入 exit 或 quit 退出；运行中输入 stop 可软停止当前任务。")
+    active_session_id = select_session_interactively()
+
+    if not active_session_id:
+        print("已退出。")
+        return
+
     messages = build_messages()
 
     while True:
